@@ -15,21 +15,22 @@ class LoadDataset:
         Initialize the LoadDataset class.
         """
         self.url = url
-        self.save_path = save_path or os.path.join(os.getcwd(), url.split('/')[-1])
+        self.save_path = save_path or os.getcwd()
         self.dataset_name = self.url.split('/')[-1]
-        self.extract_path = extract_path or os.path.join(self.save_path, "extracted")
+        self.dataset_path = os.path.join(self.save_path, self.dataset_name)
+        self.extract_path = extract_path or os.path.join(self.dataset_path, "extracted")
 
         self._load()
         self.pairs = self._parse_lfw_pairs(
-            pairs_txt=Path.joinpath(Path(self.save_path), "pairs.txt"),
-            images_dir=Path.joinpath(Path(self.extract_path), "lfw_funneled")
+            pairs_txt=os.path.join(self.dataset_path, "pairs.txt"),
+            images_dir=os.path.join(self.extract_path, "lfw_funneled")
         )
 
-    def _download(self):
+    def _download(self, force_download:bool=False):
         """
         Download the dataset from Kaggle.
         """
-        if not os.path.exists(self.save_path):
+        if not os.path.exists(self.dataset_path):
             print("Downloading dataset...")
             od.download(self.url, data_dir=self.save_path)
         else:
@@ -40,7 +41,7 @@ class LoadDataset:
         Load the dataset from Kaggle and extract it.
         """
         self._download()
-        tgz_path = os.path.join(self.save_path, "lfw-funneled.tgz")
+        tgz_path = os.path.join(self.dataset_path, "lfw-funneled.tgz")
 
         if not os.path.exists(tgz_path):
             raise FileNotFoundError(f"Dataset file {tgz_path} not found. Please check the download path.")
@@ -53,7 +54,7 @@ class LoadDataset:
         else:
             print("Dataset already extracted.")
 
-    def _parse_lfw_pairs(self, pairs_txt: Path, images_dir: Path):
+    def _parse_lfw_pairs(self, pairs_txt, images_dir):
         """
         Parses LFW pairs.txt for face verification.
 
@@ -61,8 +62,8 @@ class LoadDataset:
           List of tuples: (img_path_1, img_path_2, label)
           where label = 1 for same, 0 for different.
         """
-        pairs_txt_path = Path.joinpath(self.save_path, "pairs.txt") if pairs_txt is None else pairs_txt
-        images_dir_path = Path.joinpath(self.save_path, "lfw-funneled") if images_dir is None else images_dir
+        pairs_txt_path = pairs_txt
+        images_dir_path = Path(images_dir)
         pairs = []
         with open(pairs_txt_path, 'r') as f:
             num_folds, num_pairs = map(int, f.readline().split())

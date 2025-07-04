@@ -1,24 +1,51 @@
-from openai import AsyncOpenAI
-from openai.types.chat import ChatCompletionUserMessageParam, ChatCompletionContentPartTextParam, \
-    ChatCompletionContentPartImageParam
-from dataloader.util import encode_image_to_base64
-from constants.prompts import FAMILIAL_RELATIONSHIP_PROMPT, SAME_PERSON_PROMPT, SAME_PERSON_CONCISE_PROMPT
-from typing import List, Tuple
+import aiohttp
 import asyncio
+import logging
+from typing import List, Tuple, Dict, Any, Optional
+from dataloader.util import encode_image_to_base64
+from constants.prompts import FAMILIAL_RELATIONSHIP_PROMPT, SAME_PERSON_CONCISE_PROMPT
 from tqdm import tqdm
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class Client:
-    def __init__(self, base_url: str = "http://10.100.102.24:8000/v1", model_name: str = "gemma-3-27b-it"):
+    def __init__(self, base_url: str = "http://localhost:8000/v1", model_name: str = "gemma-3-27b-it",
+                 max_retries: int = 3, retry_delay: float = 1.0, timeout: int = 30):
         self.model_name = model_name
-        self.client = AsyncOpenAI(
-            base_url=base_url,
-            api_key="none"
-        )
+        self.base_url = base_url.rstrip('/')
+        self.chat_url = f"{self.base_url}/chat/completions"
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.session: Optional[aiohttp.ClientSession] = None
+
+    async def __aenter__(self):
+        """Async context manager entry"""
+        self.session = aiohttp.ClientSession(timeout=self.timeout)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        if self.session:
+            await self.session.close()
+
+    async def _ensure_session(self):
+        """Ensure session is created if not using context manager"""
+        if self.session is None:
+            self.session = aiohttp.ClientSession(timeout=self.timeout)
+
+    async def close(self):
+        """Close the session manually if not using context manager"""
+        if self.session:
+            await self.session.close()
+            self.session = None
 
     async def is_same_person(self, face1_path: str, face2_path: str) -> str:
         """
-        Determine if two faces belong to the same person using the OpenAI client.
+        Determine if two faces belong to the same person using the vision model.
         Args:
             face1_path (str): Path to the first face image.
             face2_path (str): Path to the second face image.
@@ -27,7 +54,7 @@ class Client:
         """
         return await self._compare_two_faces(SAME_PERSON_CONCISE_PROMPT, face1_path, face2_path)
 
-    async def is_same_person_batch(self, pairs: List[Tuple[str, str]], batch_size: int = 5) -> List[str]:
+    async def is_same_person_batch(self, pairs: List[Tuple[str, str]], batch_size: int = 8) -> List[str]:
         """
         Determine if multiple pairs of faces belong to the same person using asyncio batch processing.
         Args:
@@ -48,14 +75,21 @@ class Client:
 
         for i in tqdm(range(0, len(tasks), batch_size), desc="Processing batches", total=num_batches):
             batch_tasks = tasks[i:i + batch_size]
-            batch_results = await asyncio.gather(*batch_tasks)
-            results.extend(batch_results)
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # Handle exceptions and convert to strings
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    logger.error(f"Request failed: {result}")
+                    results.append(f"Error: {str(result)}")
+                else:
+                    results.append(result)
 
         return results
 
     async def are_faces_related(self, face1_path: str, face2_path: str) -> str:
         """
-        Determine if two faces are related using the OpenAI client.
+        Determine if two faces are related using the vision model.
         Args:
             face1_path (str): Path to the first face image.
             face2_path (str): Path to the second face image.
@@ -85,14 +119,21 @@ class Client:
 
         for i in tqdm(range(0, len(tasks), batch_size), desc="Processing batches", total=num_batches):
             batch_tasks = tasks[i:i + batch_size]
-            batch_results = await asyncio.gather(*batch_tasks)
-            results.extend(batch_results)
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+
+            # Handle exceptions and convert to strings
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    logger.error(f"Request failed: {result}")
+                    results.append(f"Error: {str(result)}")
+                else:
+                    results.append(result)
 
         return results
 
     async def _make_request(self, prompt: str, face1_path: str, face2_path: str) -> str:
         """
-        Make a single async request to the OpenAI API.
+        Make a single async request to the vision model API with retry mechanism.
         Args:
             prompt (str): The prompt to use for the comparison.
             face1_path (str): Path to the first face image.
@@ -100,20 +141,49 @@ class Client:
         Returns:
             str: The model's response to the comparison prompt.
         """
-        user_message = self._get_user_message(prompt, face1_path, face2_path)
+        await self._ensure_session()
 
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[user_message],
-            temperature=0.2,
-            max_tokens=64
-        )
+        payload = self._build_payload(prompt, face1_path, face2_path)
 
-        return response.choices[0].message.content
+        for attempt in range(self.max_retries + 1):
+            try:
+                async with self.session.post(self.chat_url, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data["choices"][0]["message"]["content"]
+                    else:
+                        error_text = await response.text()
+                        logger.warning(f"Request failed with status {response.status}: {error_text}")
+
+                        if attempt < self.max_retries:
+                            await asyncio.sleep(self.retry_delay * (2 ** attempt))  # Exponential backoff
+                            continue
+                        else:
+                            raise aiohttp.ClientError(f"Request failed after {self.max_retries} retries. Status: {response.status}")
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Request timeout (attempt {attempt + 1}/{self.max_retries + 1})")
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                else:
+                    raise
+
+            except aiohttp.ClientError as e:
+                logger.warning(f"Client error (attempt {attempt + 1}/{self.max_retries + 1}): {e}")
+                if attempt < self.max_retries:
+                    await asyncio.sleep(self.retry_delay * (2 ** attempt))
+                    continue
+                else:
+                    raise
+
+            except Exception as e:
+                logger.error(f"Unexpected error: {e}")
+                raise
 
     async def _compare_two_faces(self, prompt: str, face1_path: str, face2_path: str) -> str:
         """
-        Compare two faces using the OpenAI client and a given prompt.
+        Compare two faces using the vision model and a given prompt.
         Args:
             prompt (str): The prompt to use for the comparison.
             face1_path (str): Path to the first face image.
@@ -121,48 +191,46 @@ class Client:
         Returns:
             str: The model's response to the comparison prompt.
         """
-        user_message = self._get_user_message(prompt, face1_path, face2_path)
+        return await self._make_request(prompt, face1_path, face2_path)
 
-        response = await self.client.chat.completions.create(
-            model=self.model_name,
-            messages=[user_message],
-            temperature=0.2,
-            max_tokens=64
-        )
-
-        return response.choices[0].message.content
-
-    @staticmethod
-    def _get_user_message(prompt: str, image1_path: str, image2_path: str) -> ChatCompletionUserMessageParam:
+    def _build_payload(self, prompt: str, image1_path: str, image2_path: str) -> Dict[str, Any]:
         """
-        Construct a user message for the OpenAI chat API with a prompt and two images.
+        Build the JSON payload for the vision model API request.
         Args:
             prompt (str): The prompt text.
             image1_path (str): Path to the first image.
             image2_path (str): Path to the second image.
         Returns:
-            ChatCompletionUserMessageParam: The user message with text and image content.
+            Dict[str, Any]: The JSON payload for the API request.
         """
         image1_base64 = encode_image_to_base64(image1_path)
         image2_base64 = encode_image_to_base64(image2_path)
+
         return {
-            "role": "user",
-            "content": [
-                ChatCompletionContentPartTextParam(
-                    type="text",
-                    text=prompt
-                ),
-                ChatCompletionContentPartImageParam(
-                    type="image_url",
-                    image_url={
-                        "url": f"data:image/png;base64,{image1_base64}"
-                    }
-                ),
-                ChatCompletionContentPartImageParam(
-                    type="image_url",
-                    image_url={
-                        "url": f"data:image/png;base64,{image2_base64}"
-                    }
-                )
-            ]
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": prompt
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image1_base64}"
+                            }
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image2_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "temperature": 0.2,
+            "max_tokens": 64
         }
