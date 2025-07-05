@@ -25,6 +25,7 @@ class LoadDataset:
             pairs_txt=os.path.join(self.dataset_path, "pairs.txt"),
             images_dir=os.path.join(self.extract_path, "lfw_funneled")
         )
+        self.dataset_size = len(self.pairs)
 
     def _download(self, force_download:bool=False):
         """

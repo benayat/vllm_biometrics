@@ -21,52 +21,63 @@ class Client:
         self.retry_delay = retry_delay
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.session: Optional[aiohttp.ClientSession] = None
+        self._session_created = False
 
     async def __aenter__(self):
         """Async context manager entry"""
-        self.session = aiohttp.ClientSession(timeout=self.timeout)
+        await self._ensure_session()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self.session:
-            await self.session.close()
+        await self.close()
 
     async def _ensure_session(self):
         """Ensure session is created if not using context manager"""
-        if self.session is None:
-            self.session = aiohttp.ClientSession(timeout=self.timeout)
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession(
+                timeout=self.timeout,
+                connector=aiohttp.TCPConnector(limit=100, limit_per_host=30)
+            )
+            self._session_created = True
 
     async def close(self):
         """Close the session manually if not using context manager"""
-        if self.session:
+        if self.session and not self.session.closed:
             await self.session.close()
             self.session = None
+            self._session_created = False
 
-    async def is_same_person(self, face1_path: str, face2_path: str) -> str:
+    async def is_same_person(self, face1_path: str, face2_path: str, prompt: str = None) -> str:
         """
         Determine if two faces belong to the same person using the vision model.
         Args:
             face1_path (str): Path to the first face image.
             face2_path (str): Path to the second face image.
+            prompt (str): Optional custom prompt to use. Defaults to SAME_PERSON_CONCISE_PROMPT.
         Returns:
             str: The model's response indicating if the faces are of the same person.
         """
-        return await self._compare_two_faces(SAME_PERSON_CONCISE_PROMPT, face1_path, face2_path)
+        prompt = prompt or SAME_PERSON_CONCISE_PROMPT
+        return await self._compare_two_faces(prompt, face1_path, face2_path)
 
-    async def is_same_person_batch(self, pairs: List[Tuple[str, str]], batch_size: int = 8) -> List[str]:
+    async def is_same_person_batch(self, pairs: List[Tuple[str, str]], batch_size: int = 8, prompt: str = None) -> List[str]:
         """
         Determine if multiple pairs of faces belong to the same person using asyncio batch processing.
         Args:
             pairs (List[Tuple[str, str]]): List of tuples containing paths to face image pairs.
             batch_size (int): Number of concurrent requests per batch.
+            prompt (str): Optional custom prompt to use. Defaults to SAME_PERSON_CONCISE_PROMPT.
         Returns:
             List[str]: List of model responses for each pair.
         """
+        prompt = prompt or SAME_PERSON_CONCISE_PROMPT
+        await self._ensure_session()
+
         # Create all requests up front
         tasks = []
         for face1_path, face2_path in pairs:
-            task = self._make_request(SAME_PERSON_CONCISE_PROMPT, face1_path, face2_path)
+            task = self._make_request(prompt, face1_path, face2_path)
             tasks.append(task)
 
         # Process tasks in batches using asyncio.gather with progress bar
