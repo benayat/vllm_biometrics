@@ -23,8 +23,42 @@ from pathlib import Path
 from tqdm import tqdm
 import time
 import logging
-from typing import Dict, List, Tuple, Optional
-import argparse
+from typing import Dict, List, Tuple
+
+
+# ===============================================================================
+# CONFIGURATION PARAMETERS - EDIT THESE TO CUSTOMIZE YOUR TESTING
+# ===============================================================================
+
+# Test parameters
+NUM_SAMPLES = 6000           # Number of image pairs to test
+BATCH_SIZE = 8              # Number of concurrent requests
+MAX_RETRIES = 3             # Maximum retries for failed requests
+TIMEOUT = 30                # Request timeout in seconds
+
+# Output file
+OUTPUT_FILE = "prompt_comparison_results.json"
+
+# Select which prompts to test (comment out prompts you don't want to test)
+PROMPTS_TO_TEST = {
+    # "CONCISE": SAME_PERSON_CONCISE_PROMPT,
+    # "ENHANCED": SAME_PERSON_ENHANCED_PROMPT,
+    # "SYSTEMATIC": SAME_PERSON_SYSTEMATIC_PROMPT,
+    # "CONFIDENCE": SAME_PERSON_CONFIDENCE_PROMPT,
+    # "CHAIN_OF_THOUGHT": SAME_PERSON_COT_PROMPT,
+    # "EMOTIONLESS_AI": PERSONA_EMOTIONLESS_AI_PROMPT,
+    "FORENSIC_EXPERT": PERSONA_FORENSIC_EXPERT_PROMPT,
+    "SECURITY_SPECIALIST": PERSONA_SECURITY_SPECIALIST_PROMPT,
+    "BIOMETRIC_SCIENTIST": PERSONA_BIOMETRIC_SCIENTIST_PROMPT,
+    "MEDICAL_EXAMINER": PERSONA_MEDICAL_EXAMINER_PROMPT,
+    "ANTI_FALSE_POSITIVE": ANTI_FALSE_POSITIVE_PROMPT,
+    # "ULTRA_CONSERVATIVE": ULTRA_CONSERVATIVE_PROMPT,
+    "PRECISION_MATCHING": PRECISION_MATCHING_PROMPT,
+    "DISCRIMINATIVE_ANALYSIS": DISCRIMINATIVE_ANALYSIS_PROMPT,
+    # "IMPROVED_FROM_ANALYSIS": IMPROVED_PROMPT_FROM_ANALYSIS,  # Uncomment to test
+}
+
+# ===============================================================================
 
 
 # Configure logging
@@ -32,141 +66,98 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class PromptTester:
-    """Class to test different prompts for face verification."""
+async def load_dataset(num_samples: int) -> List[Tuple]:
+    """Load dataset pairs."""
+    loader = LoadDataset()
+    pairs = loader.pairs[:num_samples]
+    logger.info(f"Loaded {len(pairs)} pairs from the dataset.")
+    return pairs
 
-    def __init__(self, batch_size: int = 8, max_retries: int = 3, timeout: int = 30):
-        self.batch_size = batch_size
-        self.max_retries = max_retries
-        self.timeout = timeout
-        self.client = None
 
-    async def __aenter__(self):
-        """Async context manager entry"""
-        self.client = Client(max_retries=self.max_retries, timeout=self.timeout)
-        await self.client._ensure_session()
-        return self
+async def test_single_prompt(client: Client, pairs: List[Tuple], prompt_name: str, prompt_text: str) -> Dict:
+    """Test a single prompt configuration."""
+    logger.info(f"Testing prompt: {prompt_name}")
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        if self.client:
-            await self.client.close()
+    # Extract just the image paths for batch processing
+    pairs_for_batch = [(str(img1_path), str(img2_path)) for img1_path, img2_path, _ in pairs]
 
-    def load_dataset(self, num_samples: Optional[int] = None) -> List[Tuple]:
-        """Load dataset pairs."""
-        loader = LoadDataset()
-        pairs = loader.pairs
+    # Process pairs in batches
+    start_time = time.time()
+    results = await client.is_same_person_batch(pairs_for_batch, batch_size=BATCH_SIZE, prompt=prompt_text)
+    end_time = time.time()
 
-        if num_samples:
-            pairs = pairs[:num_samples]
+    # Calculate metrics
+    metrics = calculate_metrics(pairs, results)
+    metrics.update({
+        "total_predictions": len(pairs),
+        "failed_requests": sum(1 for r in results if r.startswith("Error:")),
+        "error_rate": 0.0,
+        "processing_time": end_time - start_time,
+        "avg_time_per_request": (end_time - start_time) / len(pairs),
+        "prompt_text": prompt_text
+    })
 
-        logger.info(f"Loaded {len(pairs)} pairs from the dataset.")
-        return pairs
+    return metrics
 
-    def get_prompt_configurations(self) -> Dict[str, str]:
-        """Get all available prompt configurations."""
-        return {
-            "concise": SAME_PERSON_CONCISE_PROMPT,
-            "enhanced": SAME_PERSON_ENHANCED_PROMPT,
-            "systematic": SAME_PERSON_SYSTEMATIC_PROMPT,
-            "confidence": SAME_PERSON_CONFIDENCE_PROMPT,
-            "chain_of_thought": SAME_PERSON_COT_PROMPT,
-            "emotionless_ai": PERSONA_EMOTIONLESS_AI_PROMPT,
-            "forensic_expert": PERSONA_FORENSIC_EXPERT_PROMPT,
-            "security_specialist": PERSONA_SECURITY_SPECIALIST_PROMPT,
-            "biometric_scientist": PERSONA_BIOMETRIC_SCIENTIST_PROMPT,
-            "medical_examiner": PERSONA_MEDICAL_EXAMINER_PROMPT,
-            "anti_false_positive": ANTI_FALSE_POSITIVE_PROMPT,
-            "ultra_conservative": ULTRA_CONSERVATIVE_PROMPT,
-            "precision_matching": PRECISION_MATCHING_PROMPT,
-            "discriminative_analysis": DISCRIMINATIVE_ANALYSIS_PROMPT,
-            "improved_from_analysis": IMPROVED_PROMPT_FROM_ANALYSIS
-        }
 
-    async def test_single_prompt(self, pairs: List[Tuple], prompt_name: str, prompt_text: str) -> Dict:
-        """Test a single prompt configuration."""
-        logger.info(f"Testing prompt: {prompt_name}")
+def calculate_metrics(pairs: List[Tuple], results: List[str]) -> Dict:
+    """Calculate accuracy metrics for a set of results."""
+    correct_predictions = 0
+    total_predictions = len(pairs)
+    false_positives = 0
+    false_negatives = 0
+    no_predictions = 0
 
-        # Extract just the image paths for batch processing
-        pairs_for_batch = [(str(img1_path), str(img2_path)) for img1_path, img2_path, _ in pairs]
+    for (img1_path, img2_path, label), result in zip(pairs, results):
+        # Skip failed requests
+        if result.startswith("Error:"):
+            no_predictions += 1
+            continue
 
-        # Process pairs in batches
-        start_time = time.time()
-        results = await self.client.is_same_person_batch(pairs_for_batch, batch_size=self.batch_size, prompt=prompt_text)
-        end_time = time.time()
+        # Simple heuristic to determine model prediction
+        model_prediction = None
+        result_upper = result.upper()
 
-        # Calculate metrics
-        metrics = self.calculate_metrics(pairs, results)
-        metrics.update({
-            "prompt_name": prompt_name,
-            "processing_time": end_time - start_time,
-            "total_pairs": len(pairs),
-            "failed_requests": sum(1 for r in results if r.startswith("Error:"))
-        })
+        if "YES" in result_upper and "NO" in result_upper:
+            # Contradictory response - count as incorrect
+            model_prediction = -1  # Invalid prediction
+        elif "YES" in result_upper:
+            model_prediction = 1
+        elif "NO" in result_upper:
+            model_prediction = 0
+        else:
+            no_predictions += 1
+            continue
 
-        return metrics
+        # Calculate accuracy
+        if model_prediction == label:
+            correct_predictions += 1
+        elif model_prediction == 1 and label == 0:
+            false_positives += 1
+        elif model_prediction == 0 and label == 1:
+            false_negatives += 1
 
-    def calculate_metrics(self, pairs: List[Tuple], results: List[str]) -> Dict:
-        """Calculate accuracy metrics for a set of results."""
-        correct_predictions = 0
-        total_predictions = len(pairs)
-        false_positives = 0
-        false_negatives = 0
-        no_prediction = 0
+    valid_predictions = total_predictions - no_predictions
+    accuracy = (correct_predictions / valid_predictions * 100) if valid_predictions > 0 else 0
 
-        for (img1_path, img2_path, label), result in zip(pairs, results):
-            # Skip failed requests
-            if result.startswith("Error:"):
-                no_prediction += 1
-                continue
+    return {
+        "accuracy": accuracy,
+        "correct_predictions": correct_predictions,
+        "false_positives": false_positives,
+        "false_negatives": false_negatives,
+        "no_predictions": no_predictions,
+        "valid_predictions": valid_predictions
+    }
 
-            # Simple heuristic to determine model prediction
-            model_prediction = None
-            result_upper = result.upper()
 
-            if "YES" in result_upper and "NO" in result_upper:
-                # Contradictory response - count as incorrect
-                model_prediction = -1  # Invalid prediction
-            elif "YES" in result_upper:
-                model_prediction = 1
-            elif "NO" in result_upper:
-                model_prediction = 0
-            else:
-                no_prediction += 1
-                continue
+async def test_all_prompts(pairs: List[Tuple]) -> Dict:
+    """Test all configured prompts."""
+    results = {}
 
-            # Calculate accuracy
-            if model_prediction == label:
-                correct_predictions += 1
-            elif model_prediction == 1 and label == 0:
-                false_positives += 1
-            elif model_prediction == 0 and label == 1:
-                false_negatives += 1
-
-        valid_predictions = total_predictions - no_prediction
-        accuracy = (correct_predictions / valid_predictions * 100) if valid_predictions > 0 else 0
-
-        return {
-            "accuracy": accuracy,
-            "correct_predictions": correct_predictions,
-            "false_positives": false_positives,
-            "false_negatives": false_negatives,
-            "no_prediction": no_prediction,
-            "valid_predictions": valid_predictions
-        }
-
-    async def test_multiple_prompts(self, pairs: List[Tuple], prompt_names: List[str] = None) -> Dict:
-        """Test multiple prompt configurations."""
-        prompts = self.get_prompt_configurations()
-
-        if prompt_names:
-            prompts = {name: prompts[name] for name in prompt_names if name in prompts}
-
-        results = {}
-
-        for prompt_name, prompt_text in prompts.items():
+    async with Client(max_retries=MAX_RETRIES, timeout=TIMEOUT) as client:
+        for prompt_name, prompt_text in PROMPTS_TO_TEST.items():
             try:
-                result = await self.test_single_prompt(pairs, prompt_name, prompt_text)
+                result = await test_single_prompt(client, pairs, prompt_name, prompt_text)
                 results[prompt_name] = result
 
                 # Log progress
@@ -176,64 +167,66 @@ class PromptTester:
                 logger.error(f"Failed to test prompt {prompt_name}: {e}")
                 results[prompt_name] = {"error": str(e)}
 
-        return results
+    return results
 
-    def save_results(self, results: Dict, output_file: str = "prompt_comparison_results.json"):
-        """Save results to JSON file."""
-        output_path = Path(output_file)
 
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+def save_results(results: Dict, output_file: str):
+    """Save results to JSON file."""
+    output_path = Path(output_file)
 
-        logger.info(f"Results saved to {output_path}")
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
 
-    def print_summary(self, results: Dict):
-        """Print a summary of the results."""
-        print("\n" + "="*80)
-        print("PROMPT COMPARISON SUMMARY")
-        print("="*80)
+    logger.info(f"Results saved to {output_path}")
 
-        # Sort by accuracy
-        sorted_results = sorted(
-            [(name, data) for name, data in results.items() if isinstance(data, dict) and "accuracy" in data],
-            key=lambda x: x[1]["accuracy"],
-            reverse=True
-        )
 
-        print(f"{'Prompt Name':<30} {'Accuracy':<12} {'FP':<6} {'FN':<6} {'Time':<8}")
-        print("-" * 80)
+def print_summary(results: Dict):
+    """Print a summary of the results."""
+    print("\n" + "="*80)
+    print("PROMPT COMPARISON SUMMARY")
+    print("="*80)
 
-        for prompt_name, metrics in sorted_results:
-            print(f"{prompt_name:<30} {metrics['accuracy']:<12.2f}% {metrics['false_positives']:<6} {metrics['false_negatives']:<6} {metrics['processing_time']:<8.1f}s")
+    # Sort by accuracy
+    sorted_results = sorted(
+        [(name, data) for name, data in results.items() if isinstance(data, dict) and "accuracy" in data],
+        key=lambda x: x[1]["accuracy"],
+        reverse=True
+    )
 
-        if sorted_results:
-            best_prompt, best_metrics = sorted_results[0]
-            print(f"\nBest performing prompt: {best_prompt} ({best_metrics['accuracy']:.2f}% accuracy)")
+    print(f"{'Prompt Name':<25} {'Accuracy':<10} {'FP':<6} {'FN':<6} {'Time':<8}")
+    print("-" * 80)
+
+    for prompt_name, metrics in sorted_results:
+        print(f"{prompt_name:<25} {metrics['accuracy']:<10.1f}% {metrics['false_positives']:<6} {metrics['false_negatives']:<6} {metrics['processing_time']:<8.1f}s")
+
+    if sorted_results:
+        best_prompt, best_metrics = sorted_results[0]
+        print(f"\nBest performing prompt: {best_prompt} ({best_metrics['accuracy']:.2f}% accuracy)")
 
 
 async def main():
     """Main function to run prompt testing."""
-    parser = argparse.ArgumentParser(description="Test different prompts for face verification")
-    parser.add_argument("--num-samples", type=int, default=200, help="Number of samples to test (default: 200)")
-    parser.add_argument("--batch-size", type=int, default=8, help="Batch size for processing (default: 8)")
-    parser.add_argument("--prompts", nargs="+", help="Specific prompts to test (default: all)")
-    parser.add_argument("--output", default="prompt_comparison_results.json", help="Output file for results")
-    parser.add_argument("--max-retries", type=int, default=3, help="Maximum number of retries for failed requests")
-    parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds")
+    print("="*80)
+    print("FACE VERIFICATION PROMPT TESTING")
+    print("="*80)
+    print(f"Configuration:")
+    print(f"- Samples: {NUM_SAMPLES}")
+    print(f"- Batch size: {BATCH_SIZE}")
+    print(f"- Max retries: {MAX_RETRIES}")
+    print(f"- Timeout: {TIMEOUT}s")
+    print(f"- Prompts to test: {len(PROMPTS_TO_TEST)}")
+    print(f"- Output file: {OUTPUT_FILE}")
+    print("="*80)
 
-    args = parser.parse_args()
+    # Load dataset
+    pairs = await load_dataset(NUM_SAMPLES)
 
-    # Initialize tester
-    async with PromptTester(batch_size=args.batch_size, max_retries=args.max_retries, timeout=args.timeout) as tester:
-        # Load dataset
-        pairs = tester.load_dataset(num_samples=args.num_samples)
+    # Test all prompts
+    results = await test_all_prompts(pairs)
 
-        # Test prompts
-        results = await tester.test_multiple_prompts(pairs, prompt_names=args.prompts)
-
-        # Save and display results
-        tester.save_results(results, args.output)
-        tester.print_summary(results)
+    # Save and display results
+    save_results(results, OUTPUT_FILE)
+    print_summary(results)
 
 
 if __name__ == "__main__":

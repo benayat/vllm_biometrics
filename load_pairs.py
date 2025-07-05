@@ -4,6 +4,19 @@ import asyncio
 import json
 from pathlib import Path
 from tqdm import tqdm
+from constants.prompts import *
+
+PROMPTS_TO_TEST = {
+    "FORENSIC_EXPERT": PERSONA_FORENSIC_EXPERT_PROMPT,
+    "SECURITY_SPECIALIST": PERSONA_SECURITY_SPECIALIST_PROMPT,
+    "BIOMETRIC_SCIENTIST": PERSONA_BIOMETRIC_SCIENTIST_PROMPT,
+    "MEDICAL_EXAMINER": PERSONA_MEDICAL_EXAMINER_PROMPT,
+    "ANTI_FALSE_POSITIVE": ANTI_FALSE_POSITIVE_PROMPT,
+    # "ULTRA_CONSERVATIVE": ULTRA_CONSERVATIVE_PROMPT,
+    "PRECISION_MATCHING": PRECISION_MATCHING_PROMPT,
+    "DISCRIMINATIVE_ANALYSIS": DISCRIMINATIVE_ANALYSIS_PROMPT,
+    # "IMPROVED_FROM_ANALYSIS": IMPROVED_PROMPT_FROM_ANALYSIS,  # Uncomment to test
+}
 
 async def main():
     loader = LoadDataset()
@@ -17,7 +30,7 @@ async def main():
 
         # Process all pairs in batch with specified batch size
         print("Processing all pairs in batch...")
-        results = await client.is_same_person_batch(pairs_for_batch, batch_size=10)
+        results = await client.is_same_person_batch(pairs_for_batch, batch_size=20, prompt="is it the same person?output in YES or NO only")
 
         # Prepare data for JSON output with progress bar
         output_data = []

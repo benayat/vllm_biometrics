@@ -14,7 +14,7 @@ echo "Host: $HOST"
 echo "Port: $PORT"
 echo "Max Model Length: $MAX_MODEL_LEN"
 
-# Start the vLLM OpenAI API server
+# Start the vLLM OpenAI API server with embeddings support
 python -m vllm.entrypoints.openai.api_server \
     --model "$MODEL_NAME" \
     --host "$HOST" \
@@ -22,10 +22,10 @@ python -m vllm.entrypoints.openai.api_server \
     --trust-remote-code \
     --served-model-name "gemma-3-27b-it" \
     --max-model-len "$MAX_MODEL_LEN" \
-    --served-model-name "gemma-3-27b-it" \
     --max-parallel-loading-workers 8 \
     --disable-log-requests \
-    --task "embed"
+    --enable-auto-tool-choice \
+    --chat-template ./chat_template.jinja
 
 echo "Server started at http://$HOST:$PORT"
 echo "API documentation available at http://$HOST:$PORT/docs"

@@ -286,3 +286,10 @@ RESPONSE FORMAT REQUIREMENTS:
 
 Your analysis:
 """
+
+# Iris-specific prompt
+IRIS_COMPARISON_PROMPT = """
+Compare these two iris images. Are they from the same person? 
+Analyze the unique iris patterns, texture, and distinctive features.
+Answer with YES or NO followed by a brief explanation.
+"""
