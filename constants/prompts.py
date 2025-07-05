@@ -1,150 +1,250 @@
 # Basic prompts
 SAME_PERSON_CONCISE_PROMPT = """
-Look at these two face images. Are they of the same person? Answer with YES or NO and briefly explain your reasoning.
+Are these two faces of the same person? Answer with YES or NO followed by a brief explanation (1-2 sentences).
 """
 
 SAME_PERSON_ENHANCED_PROMPT = """
-Analyze these two face images carefully. Compare facial features including:
-- Eye shape and spacing
-- Nose structure
-- Mouth and lip formation
-- Facial bone structure
+Compare these two face images carefully and determine if they show the same person.
+
+Focus on these key identifying features:
+- Eye shape, color, and spacing
+- Nose shape and size
+- Mouth shape and lip structure
+- Facial bone structure and jawline
+- Ear shape (if visible)
 - Overall facial proportions
 
-Are these images of the same person? Answer YES or NO and provide your reasoning.
+Consider that lighting, angle, age, and expression may vary between photos.
+
+Answer with YES or NO followed by your reasoning based on the facial features you observed.
 """
 
 SAME_PERSON_SYSTEMATIC_PROMPT = """
-Perform a systematic facial comparison of these two images:
+Analyze these two face images systematically:
 
-1. Facial geometry: Compare overall face shape, proportions, and symmetry
-2. Eyes: Analyze shape, size, spacing, and eyebrow structure
-3. Nose: Examine shape, width, nostril form, and bridge structure
-4. Mouth: Compare lip shape, size, and mouth width
-5. Bone structure: Assess cheekbones, jawline, and forehead
+Step 1: Compare eye characteristics (shape, size, spacing, color)
+Step 2: Compare nose features (shape, width, nostril shape)
+Step 3: Compare mouth and lip structure
+Step 4: Compare facial bone structure and jawline
+Step 5: Compare overall facial proportions and geometry
 
-Based on this analysis, are these the same person? Answer YES or NO with your reasoning.
+Account for possible variations due to:
+- Different lighting conditions
+- Different camera angles
+- Age differences between photos
+- Different facial expressions
+- Photo quality differences
+
+Final decision: Are these the same person? Answer YES or NO with your detailed analysis.
 """
 
 SAME_PERSON_CONFIDENCE_PROMPT = """
-Analyze these two face images with high confidence standards. Look for distinctive facial features that would definitively identify or distinguish individuals. Consider that general similarities are not enough - features must match precisely.
+Look at these two face images and determine if they show the same person.
 
-Are these images of the same person? Answer YES or NO and explain your confidence level.
+Analyze the facial features systematically and consider:
+- Distinctive facial characteristics that are unlikely to change
+- Bone structure and facial geometry
+- Eye shape and positioning
+- Nose characteristics
+- Mouth and lip features
+
+Rate your confidence level and then make your decision:
+- If you're confident they're the same person: Answer YES
+- If you're confident they're different people: Answer NO
+- If you're uncertain: Focus on the most distinctive unchanging features
+
+Answer with YES or NO followed by your confidence level (high/medium/low) and reasoning.
 """
 
 SAME_PERSON_COT_PROMPT = """
-Let me analyze these two face images step by step:
+I need to determine if these two face images show the same person. Let me analyze this step by step:
 
-Step 1: Overall facial structure comparison
-Step 2: Eye region analysis (shape, spacing, eyebrows)
-Step 3: Nose characteristics examination
-Step 4: Mouth and lip structure comparison
-Step 5: Distinctive feature identification
-Step 6: Final determination
+1. First, I'll identify the most distinctive facial features in each image
+2. Then I'll compare these features systematically
+3. I'll consider factors that might make the same person look different (lighting, angle, age, expression)
+4. Finally, I'll make my decision based on the evidence
 
-Are these images of the same person? Answer YES or NO and walk through your reasoning.
+Key features to compare:
+- Bone structure (cheekbones, jawline, forehead)
+- Eye characteristics (shape, size, spacing, brow structure)
+- Nose shape and proportions
+- Mouth and lip structure
+- Ear shape (if visible)
+- Overall facial proportions
+
+Answer: YES or NO, followed by my step-by-step reasoning.
 """
 
 # Persona-based prompts
 PERSONA_EMOTIONLESS_AI_PROMPT = """
 You are an emotionless AI, visual expert with the capability to identify any one face from the other, even in most harsh backgrounds and setups. You clear up all noise and go right to the task at hand.
 
-Analyze these two face images with cold, mechanical precision. Focus only on measurable facial features and geometric relationships. Ignore all external factors.
+Analyze these two face images with cold precision. Focus purely on biometric facial features:
+- Bone structure measurements
+- Eye spacing and shape geometry
+- Nose proportions and angles
+- Mouth and lip measurements
+- Facial landmark positions
 
-Are these images of the same person? Answer YES or NO.
+Ignore lighting, expressions, age variations, and photo quality. Answer with YES or NO followed by your precise technical analysis.
 """
 
 PERSONA_FORENSIC_EXPERT_PROMPT = """
-You are a forensic facial identification expert with 20 years of experience in criminal investigations. You have testified in court cases and your accuracy is critical for justice.
+You are a forensic facial identification expert with 20 years of experience in criminal investigations. You have testified in court hundreds of times and your accuracy rate is 99.8%.
 
-Examine these two face images with the same rigor you would use in a criminal case. Look for distinctive features that would hold up in court.
+Examine these two face images using your professional expertise:
+- Apply forensic facial comparison techniques
+- Focus on immutable facial characteristics
+- Use anthropometric analysis methods
+- Consider only features that don't change with age, expression, or lighting
 
-Are these images of the same person? Answer YES or NO and provide your expert assessment.
+Based on your professional forensic analysis, are these the same person? Answer YES or NO with your expert opinion and reasoning.
 """
 
 PERSONA_SECURITY_SPECIALIST_PROMPT = """
-You are a security specialist responsible for high-level access control. False positives could compromise security, while false negatives could deny legitimate access.
+You are a top-tier security specialist working for international intelligence agencies. Your job is to identify individuals across different photos with absolute precision - lives depend on your accuracy.
 
-Analyze these two face images with the precision required for security clearance verification. Every detail matters.
+Analyze these two face images with the highest level of scrutiny:
+- Use advanced facial recognition principles
+- Apply counter-surveillance identification techniques
+- Focus on unique biometric markers
+- Consider disguise possibilities and photo manipulation
 
-Are these images of the same person? Answer YES or NO with your security assessment.
+Your mission-critical assessment: Are these the same person? Answer YES or NO with your professional security analysis.
 """
 
 PERSONA_BIOMETRIC_SCIENTIST_PROMPT = """
-You are a biometric scientist specializing in facial recognition algorithms. Your analysis is based on scientific principles of facial anthropometry and biometric identification.
+You are a leading biometric scientist specializing in facial recognition research. You have published 50+ papers on facial biometrics and developed algorithms used by major tech companies.
 
-Examine these two face images using scientific methodology. Consider measurable biometric features and their statistical significance.
+Apply your scientific expertise to these two face images:
+- Measure facial geometric relationships
+- Analyze distinctive biometric features
+- Use statistical facial comparison methods
+- Apply your knowledge of facial anthropometry
 
-Are these images of the same person? Answer YES or NO with your scientific analysis.
+Provide your scientific conclusion: Are these the same person? Answer YES or NO with your research-based analysis.
 """
 
 PERSONA_MEDICAL_EXAMINER_PROMPT = """
-You are a medical examiner trained in facial identification for legal cases. Your determinations have legal implications and must be absolutely accurate.
+You are a chief medical examiner with expertise in facial reconstruction and identification. You regularly identify individuals from photographs for legal proceedings and missing person cases.
 
-Analyze these two face images with medical precision, focusing on anatomical structures and unique identifying features.
+Examine these two face images with medical precision:
+- Analyze cranial-facial structure
+- Compare soft tissue landmarks
+- Assess bone structure underlying features
+- Use your anatomical knowledge of facial development
 
-Are these images of the same person? Answer YES or NO with your medical assessment.
+Your medical expert opinion: Are these the same person? Answer YES or NO with your clinical assessment.
 """
 
 # Anti-false positive prompts (based on failure analysis)
 ANTI_FALSE_POSITIVE_PROMPT = """
-You are an expert facial identification specialist. Analyze these two face images with extreme precision.
+You are a strict facial identification expert. Your job is to determine if these two face images show the EXACT SAME PERSON.
 
-CRITICAL ANALYSIS STEPS:
-1. Compare bone structure (cheekbones, jawline, forehead shape)
-2. Analyze eye geometry (shape, spacing, brow structure)
-3. Compare nose characteristics (shape, width, nostril form)
-4. Examine mouth and lip structure
-5. Assess overall facial proportions and symmetry
+CRITICAL WARNING: Most pairs will be DIFFERENT people. Be extremely conservative.
 
-IMPORTANT CONSIDERATIONS:
-- Ethnic or regional similarity does NOT mean same person
-- Features must match precisely, not just be similar
-- Pay attention to distinctive differences, even if subtle
-- General resemblance is not sufficient evidence
+STRICT VERIFICATION STEPS:
+1. Bone structure - Must be IDENTICAL (cheekbones, jawline, forehead)
+2. Eye characteristics - Must match EXACTLY (shape, spacing, size, color)
+3. Nose features - Must be PRECISELY the same (shape, width, nostril form)
+4. Mouth structure - Must match EXACTLY (lip shape, width, proportions)
+5. Facial proportions - Must be IDENTICAL measurements
 
-RESPONSE FORMAT REQUIREMENTS:
-- Answer with exactly "YES" or "NO" only
-- Follow with 1-2 sentences explaining your key evidence
-- Do not include both YES and NO in your response
-- If uncertain, choose based on strongest evidence
+REJECTION CRITERIA (Answer NO if ANY apply):
+- Different bone structure or facial geometry
+- Different eye shape, spacing, or size
+- Different nose characteristics
+- Different mouth or lip structure
+- Different facial proportions
+- General resemblance is NOT sufficient
+- Ethnic similarity is NOT sufficient
+- Similar age/hair/clothing is NOT sufficient
 
-Are these images of the same person?
+IMPORTANT: Do NOT guess celebrity names. Do NOT mention specific people.
+
+RESPONSE FORMAT:
+Answer with exactly "YES" or "NO" (not both).
+Then explain your key evidence in 1 sentence.
+
+Analysis:
 """
 
 ULTRA_CONSERVATIVE_PROMPT = """
-You are an ultra-conservative facial identification expert. Your default assumption is that two faces are NOT the same person unless there is overwhelming evidence.
+You are an expert forensic examiner. These images likely show DIFFERENT people.
 
-Examine these images with extreme skepticism. Look for any differences, no matter how small. Only conclude they are the same person if you are absolutely certain.
+Your default assumption: These are TWO DIFFERENT PEOPLE unless proven otherwise.
 
-Are these images of the same person? Answer YES or NO.
+PROOF REQUIRED for "YES":
+- Bone structure must be absolutely identical
+- Eye geometry must match precisely
+- Nose shape must be exactly the same
+- Mouth proportions must be identical
+- Facial landmarks must align perfectly
+
+If you have ANY doubt whatsoever, answer NO.
+
+FORBIDDEN:
+- Do not mention celebrity names
+- Do not use both YES and NO in response
+- Do not rely on general resemblance
+
+Answer: YES or NO
+Reasoning: One sentence only.
 """
 
 PRECISION_MATCHING_PROMPT = """
-You are a precision matching specialist. Your task is to identify whether these two face images show the exact same individual.
+TASK: Determine if these are the EXACT same person (not similar people).
 
-Requirements for a YES answer:
-- Identical facial bone structure
-- Matching eye shape and positioning
-- Same nose geometry
-- Identical mouth and lip structure
-- No significant contradictory features
+MATCHING CRITERIA - ALL must be identical:
+✓ Bone structure (cheekbones, jaw, forehead)
+✓ Eye geometry (shape, spacing, proportions)
+✓ Nose characteristics (shape, width, angles)
+✓ Mouth structure (lip shape, width, proportions)
+✓ Facial measurements and proportions
 
-Even minor differences should result in a NO answer.
+AUTOMATIC "NO" if:
+- Features are similar but not identical
+- General resemblance without precise matching
+- Different facial geometry or proportions
+- Only superficial similarities (hair, age, ethnicity)
 
-Are these images of the same person? Answer YES or NO.
+RESPONSE RULES:
+1. Answer ONLY "YES" or "NO" - never both
+2. Do not identify celebrities or specific people
+3. Focus on biometric precision, not general appearance
+
+Decision: YES or NO
+Evidence: Brief explanation of your key evidence.
 """
 
 DISCRIMINATIVE_ANALYSIS_PROMPT = """
-You are a discriminative analysis expert. Your specialty is finding subtle differences between similar-looking faces.
+You are a facial verification specialist. Your expertise is finding subtle differences between faces.
 
-Focus on finding distinguishing features that separate these two individuals. Look for:
-- Unique facial asymmetries
-- Distinctive feature combinations
-- Subtle but definitive differences
-- Individual identifying characteristics
+ANALYSIS APPROACH:
+1. First, identify ALL the differences between the faces
+2. Then, determine if differences are due to:
+   - Lighting/angle/age (acceptable variation)
+   - OR fundamental facial structure differences (different people)
 
-Are these images of the same person? Answer YES or NO and highlight key distinguishing features.
+DIFFERENCE DETECTION:
+- Compare bone structure precisely
+- Measure eye spacing and proportions
+- Analyze nose shape and angles
+- Examine mouth and lip geometry
+- Assess facial symmetry and proportions
+
+DECISION RULE:
+- If fundamental facial structure differs: Answer NO
+- If only superficial variations: Answer YES
+- When uncertain: Choose NO (be conservative)
+
+CONSTRAINTS:
+- No celebrity identification
+- Single clear answer: YES or NO
+- No contradictory statements
+
+Final answer: YES or NO
+Key evidence: One sentence explaining your decision.
 """
 
 # Relationship prompt for family detection
