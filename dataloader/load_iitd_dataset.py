@@ -34,12 +34,14 @@ class LoadIITDDataset:
         print("Generating impostor pairs...")
         self.impostor_pairs = self._generate_all_impostor_pairs()
 
+        # Shuffle all pairs to ensure randomness (same as LFW dataset)
+        random.shuffle(self.genuine_pairs)
+        random.shuffle(self.impostor_pairs)
+
         # Combine all pairs
         self.pairs = self.genuine_pairs + self.impostor_pairs
-        
-        # Shuffle for random order
-        random.shuffle(self.pairs)
-        
+        random.shuffle(self.pairs)  # Shuffle combined pairs too
+
         self.dataset_size = len(self.pairs)
         
         # Print statistics

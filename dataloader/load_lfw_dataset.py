@@ -48,8 +48,14 @@ class LoadLFWDataset:
         # Combine all pairs
         self.genuine_pairs = self.official_genuine_pairs + self.additional_genuine_pairs
         self.impostor_pairs = self.official_impostor_pairs + self.additional_impostor_pairs
+
+        # Shuffle all pairs to ensure randomness
+        random.shuffle(self.genuine_pairs)
+        random.shuffle(self.impostor_pairs)
+
         self.pairs = self.genuine_pairs + self.impostor_pairs
-        
+        random.shuffle(self.pairs)  # Shuffle combined pairs too
+
         # Print statistics
         self._print_statistics()
     
