@@ -113,29 +113,35 @@ def get_optimized_face_embedding(image_path, top_dimensions=None, method="mean_p
         image = Image.open(image_path).convert('RGB')
         inputs = processor2(images=image, return_tensors="pt")
         
-        # Move inputs to the correct device and convert to float32 to avoid BFloat16 issues
-        inputs = {k: v.to(model.device).float() if v.dtype == torch.bfloat16 else v.to(model.device) for k, v in inputs.items()}
+        # Move inputs to device and ensure consistent data types
+        inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            # Get vision tower outputs
-            vision_tower = model.vision_tower
-            image_features = vision_tower(inputs["pixel_values"])
-            
-            # Get the last hidden state and convert to float32 if needed
-            last_hidden_state = image_features.last_hidden_state
-            if last_hidden_state.dtype == torch.bfloat16:
-                last_hidden_state = last_hidden_state.float()
+            # Use the same pipeline as the analysis phase to ensure dimension consistency
+            image_outputs = model.vision_tower(inputs['pixel_values'])
+            selected_image_feature = image_outputs.last_hidden_state
 
-            # Apply pooling strategy
+            # Convert to float32 if needed to avoid BFloat16 issues
+            if selected_image_feature.dtype == torch.bfloat16:
+                selected_image_feature = selected_image_feature.float()
+
+            # Apply multi-modal projector to match analysis phase (2560 dimensions)
+            image_embeddings = model.multi_modal_projector(selected_image_feature)
+
+            # Convert to float32 if needed
+            if image_embeddings.dtype == torch.bfloat16:
+                image_embeddings = image_embeddings.float()
+
+            # Apply pooling strategy (mean_pooling was used in analysis)
             if method == "mean_pooling":
-                embedding = last_hidden_state.mean(dim=1).squeeze(0)
+                embedding = image_embeddings.mean(dim=1).squeeze(0)
             elif method == "max_pooling":
-                embedding = last_hidden_state.max(dim=1).values.squeeze(0)
+                embedding = image_embeddings.max(dim=1).values.squeeze(0)
             elif method == "cls_token":
-                embedding = last_hidden_state[:, 0, :].squeeze(0)
+                embedding = image_embeddings[:, 0, :].squeeze(0)
             else:
-                embedding = last_hidden_state.mean(dim=1).squeeze(0)
-            
+                embedding = image_embeddings.mean(dim=1).squeeze(0)
+
             # Convert to numpy
             full_embedding = embedding.cpu().numpy()
             

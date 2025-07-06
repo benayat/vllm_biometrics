@@ -151,14 +151,25 @@ class OptimizedIrisRecognition:
         try:
             # Load and preprocess the image
             image = Image.open(image_path).convert('RGB')
-            inputs = self.processor2(images=image, return_tensors="pt").to(
-                self.model.device, dtype=torch.bfloat16
-            )
-            
+            inputs = self.processor2(images=image, return_tensors="pt")
+
+            # Move inputs to device (let model handle dtype automatically)
+            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
             with torch.no_grad():
-                image_outputs = self.model.vision_tower(inputs.pixel_values)
+                image_outputs = self.model.vision_tower(inputs['pixel_values'])
                 selected_image_feature = image_outputs.last_hidden_state
+
+                # Convert to float32 if needed to avoid BFloat16 issues
+                if selected_image_feature.dtype == torch.bfloat16:
+                    selected_image_feature = selected_image_feature.float()
+
                 image_embeddings = self.model.multi_modal_projector(selected_image_feature)
+
+                # Convert to float32 if needed
+                if image_embeddings.dtype == torch.bfloat16:
+                    image_embeddings = image_embeddings.float()
+
                 image_embedding_vector = image_embeddings.mean(dim=1)
             
             # Convert to numpy and normalize
