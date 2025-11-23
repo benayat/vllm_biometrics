@@ -80,3 +80,12 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+
+# Project-specific
+.pytest_cache/
+benchmark_results/
+face_benchmark_results/
+multimodal_analysis/
+data/
+sd300a/
+lfwpeople/
