@@ -44,7 +44,7 @@ TOP_DIMENSIONS = None  # Will be loaded from dimension analysis or computed
 
 # Benchmark parameters
 BATCH_SIZE = 100              # Number of pairs to process simultaneously (reduced for memory)
-SIMILARITY_THRESHOLD = 0.96  # Threshold for same/different person decision
+SIMILARITY_THRESHOLD = 0.9861513021016362  # Threshold for same/different person decision
 MAX_PAIRS_TO_TEST = None     # Set to None for full dataset, or number for subset
 SAVE_DETAILED_RESULTS = True # Save individual pair results
 OUTPUT_DIR = "benchmark_results"
@@ -108,32 +108,65 @@ class OptimizedIrisRecognition:
             logger.info("✅ Model loaded successfully!")
 
     def _load_optimal_dimensions(self):
-        """Load the optimal dimension indices from saved analysis results."""
-        logger.info("🔍 Loading optimal dimension indices...")
-        
+        """Load the optimal dimension indices and best method from full analysis results."""
+        logger.info("🔍 Loading optimal dimension indices and method...")
+
         optimal_dims_file = "optimal_iris_dimensions.json"
 
         try:
-            # Try to load from saved analysis results
+            # Load from full analysis results
             with open(optimal_dims_file, 'r') as f:
-                optimal_data = json.load(f)
+                data = json.load(f)
 
-            self.top_dimensions = np.array(optimal_data["top_dimension_indices"])
-            self.optimal_dims = optimal_data["optimal_dimension_count"]
+            # Check if this is a full analysis file or simple dimensions file
+            if "method_comparison" in data:
+                # Full analysis file
+                self.optimal_dims = data["dimension_analysis"]["optimal_dimension_count"]
+                self.top_dimensions = np.array(data["dimension_analysis"]["top_dimension_indices"])
+                self.best_method = data["method_comparison"]["best_method"]
 
-            logger.info(f"✅ Loaded optimal dimensions from {optimal_dims_file}")
-            logger.info(f"   Using {self.optimal_dims} dimensions")
-            logger.info(f"   Analysis timestamp: {optimal_data['analysis_timestamp']}")
-            logger.info(f"   Discrimination ratio: {optimal_data['discrimination_ratio']:.6f}")
-            logger.info(f"   Separation: {optimal_data['separation']:.6f}")
+                # Parse the best method to extract pooling strategy and similarity metric
+                parts = self.best_method.split("_")
+                self.pooling_strategy = "_".join(parts[:-1])  # Everything except the last part
+                self.similarity_metric = parts[-1]  # The last part
+
+                logger.info(f"✅ Loaded optimal configuration from {optimal_dims_file}")
+                logger.info(f"   Using {self.optimal_dims} dimensions")
+                logger.info(f"   Best method: {self.best_method}")
+                logger.info(f"   Pooling strategy: {self.pooling_strategy}")
+                logger.info(f"   Similarity metric: {self.similarity_metric}")
+                logger.info(f"   Analysis timestamp: {data.get('analysis_info', {}).get('timestamp', 'Unknown')}")
+
+                # Get performance metrics from analysis
+                best_result = data["method_comparison"]["results"][self.best_method]
+                logger.info(f"   Discrimination ratio: {best_result['discrimination_ratio']:.6f}")
+                logger.info(f"   Separation: {best_result['separation']:.6f}")
+
+            else:
+                # Simple dimensions file (fallback)
+                self.optimal_dims = data["optimal_dimension_count"]
+                self.top_dimensions = np.array(data["top_dimension_indices"])
+                self.best_method = "mean_pooling_cosine"  # Default fallback
+                self.pooling_strategy = "mean_pooling"
+                self.similarity_metric = "cosine"
+
+                logger.info(f"✅ Loaded simple dimensions from {optimal_dims_file}")
+                logger.info(f"   Using {self.optimal_dims} dimensions")
+                logger.warning("   Using default methods (mean_pooling, cosine) - consider running full analysis")
+
+                # Get legacy performance metrics if available
+                if "discrimination_ratio" in data:
+                    logger.info(f"   Discrimination ratio: {data['discrimination_ratio']:.6f}")
+                if "separation" in data:
+                    logger.info(f"   Separation: {data['separation']:.6f}")
 
         except FileNotFoundError:
             logger.error(f"❌ {optimal_dims_file} not found!")
-            logger.error("   Please run: python transformers_embeddings.py dimension")
+            logger.error("   Please run: python transformers_embeddings.py iris")
             logger.error("   This will generate the optimal dimensions file automatically.")
             raise FileNotFoundError(
                 f"Optimal dimensions file '{optimal_dims_file}' not found. "
-                "Run 'python transformers_embeddings.py dimension' first to generate it."
+                "Run 'python transformers_embeddings.py iris' first to generate it."
             )
 
         except Exception as e:
@@ -141,40 +174,57 @@ class OptimizedIrisRecognition:
             logger.warning("⚠️  Falling back to placeholder dimensions")
             # Use evenly spaced dimensions as fallback
             total_dims = 2560
+            self.optimal_dims = 90
             self.top_dimensions = np.linspace(0, total_dims-1, self.optimal_dims, dtype=int)
+            self.best_method = "mean_pooling_cosine"
+            self.pooling_strategy = "mean_pooling"
+            self.similarity_metric = "cosine"
             logger.warning(f"   Using {len(self.top_dimensions)} evenly-spaced dimensions as fallback")
 
-        logger.info(f"✅ Ready to use top {len(self.top_dimensions)} dimensions for iris recognition")
+        logger.info(f"✅ Ready to use top {len(self.top_dimensions)} dimensions with {self.best_method} for iris recognition")
 
     def get_full_embedding(self, image_path: str) -> np.ndarray:
-        """Extract full embedding from iris image."""
+        """Extract full embedding from iris image using the optimal pooling strategy."""
         try:
             # Load and preprocess the image
             image = Image.open(image_path).convert('RGB')
             inputs = self.processor2(images=image, return_tensors="pt")
 
-            # Move inputs to device (let model handle dtype automatically)
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            # Move inputs to device and convert to model's native dtype (BFloat16)
+            inputs = {k: v.to(self.model.device).to(self.model.dtype) for k, v in inputs.items()}
 
             with torch.no_grad():
                 image_outputs = self.model.vision_tower(inputs['pixel_values'])
                 selected_image_feature = image_outputs.last_hidden_state
 
-                # Convert to float32 if needed to avoid BFloat16 issues
-                if selected_image_feature.dtype == torch.bfloat16:
-                    selected_image_feature = selected_image_feature.float()
+                # Ensure BFloat16 consistency
+                if selected_image_feature.dtype != self.model.dtype:
+                    selected_image_feature = selected_image_feature.to(self.model.dtype)
 
                 image_embeddings = self.model.multi_modal_projector(selected_image_feature)
 
-                # Convert to float32 if needed
-                if image_embeddings.dtype == torch.bfloat16:
-                    image_embeddings = image_embeddings.float()
+                # Ensure BFloat16 consistency
+                if image_embeddings.dtype != self.model.dtype:
+                    image_embeddings = image_embeddings.to(self.model.dtype)
 
-                image_embedding_vector = image_embeddings.mean(dim=1)
-            
-            # Convert to numpy and normalize
-            embedding_np = image_embedding_vector.cpu().numpy().flatten()
-            
+                # Apply the optimal pooling strategy identified from analysis
+                if self.pooling_strategy == "mean_pooling":
+                    image_embedding_vector = image_embeddings.mean(dim=1)
+                elif self.pooling_strategy == "max_pooling":
+                    image_embedding_vector = image_embeddings.max(dim=1).values
+                elif self.pooling_strategy == "std_pooling":
+                    image_embedding_vector = image_embeddings.std(dim=1)
+                elif self.pooling_strategy == "attention_pooling":
+                    # Simple attention pooling
+                    attention_weights = torch.softmax(image_embeddings.mean(dim=-1), dim=-1)
+                    image_embedding_vector = torch.sum(image_embeddings * attention_weights.unsqueeze(-1), dim=1)
+                else:
+                    # Default to mean pooling
+                    image_embedding_vector = image_embeddings.mean(dim=1)
+
+            # Convert to float32 only for numpy conversion (numpy doesn't support BFloat16)
+            embedding_np = image_embedding_vector.float().cpu().numpy().flatten()
+
             # Normalize to unit vector
             norm = np.linalg.norm(embedding_np)
             if norm > 0:
@@ -336,12 +386,29 @@ class OptimizedIrisRecognition:
         return optimized_embeddings
 
     def compute_similarity(self, embedding1: np.ndarray, embedding2: np.ndarray) -> float:
-        """Compute cosine similarity between two embeddings."""
+        """Compute similarity between two embeddings using the optimal metric from analysis."""
         if embedding1 is None or embedding2 is None:
             return 0.0
         
-        # Cosine similarity (embeddings are already normalized)
-        similarity = np.dot(embedding1, embedding2)
+        if self.similarity_metric == "cosine":
+            # Cosine similarity (embeddings are already normalized)
+            similarity = np.dot(embedding1, embedding2)
+        elif self.similarity_metric == "euclidean":
+            # Euclidean distance (converted to similarity)
+            distance = np.linalg.norm(embedding1 - embedding2)
+            similarity = 1.0 / (1.0 + distance)  # Convert distance to similarity
+        elif self.similarity_metric == "manhattan":
+            # Manhattan distance (converted to similarity)
+            distance = np.sum(np.abs(embedding1 - embedding2))
+            similarity = 1.0 / (1.0 + distance)  # Convert distance to similarity
+        elif self.similarity_metric == "correlation":
+            # Pearson correlation coefficient
+            correlation = np.corrcoef(embedding1, embedding2)[0, 1]
+            similarity = correlation if not np.isnan(correlation) else 0.0
+        else:
+            # Default to cosine similarity
+            similarity = np.dot(embedding1, embedding2)
+
         return float(similarity)
     
     def verify_iris_pair(self, image1_path: str, image2_path: str, 
@@ -759,42 +826,221 @@ class IrisRecognitionBenchmark:
         print(f"   Embedding success: {sys_info['embedding_success_rate']*100:.2f}%")
 
 
+def compare_benchmark_sizes():
+    """Compare performance across different benchmark sizes."""
+
+    print(f"\n🔬 COMPREHENSIVE IRIS BENCHMARK COMPARISON")
+    print("=" * 60)
+
+    sizes_to_test = ["small", "medium", "large", "quick"]
+    all_results = {}
+
+    for size in sizes_to_test:
+        print(f"\n{'='*20} Testing {size.upper()} {'='*20}")
+
+        try:
+            # Initialize fresh system for each test
+            iris_system = OptimizedIrisRecognition()
+            benchmark = IrisRecognitionBenchmark(iris_system)
+
+            # Map size to parameters
+            if size == "quick":
+                results = benchmark.run_benchmark(quick_test=True)
+            elif size == "small":
+                results = benchmark.run_benchmark(max_pairs=1000)
+            elif size == "medium":
+                results = benchmark.run_benchmark(max_pairs=5000)
+            elif size == "large":
+                results = benchmark.run_benchmark(max_pairs=20000)
+
+            all_results[size] = results
+
+        except Exception as e:
+            print(f"❌ Error testing {size}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Create comparison summary
+    print(f"\n📊 IRIS BENCHMARK COMPARISON SUMMARY")
+    print("=" * 60)
+
+    comparison_data = {
+        "comparison_timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "model_id": MODEL_ID,
+        "results": {}
+    }
+
+    for size, results in all_results.items():
+        if results and "metrics" in results:
+            metrics = results["metrics"]["performance"]
+            timing = results["metrics"]["timing"]
+            comparison_data["results"][size] = {
+                "accuracy": metrics["accuracy"],
+                "pairs_tested": metrics["total_pairs"],
+                "processing_time": timing["total_time_seconds"],
+                "f1_score": metrics["f1_score"],
+                "pairs_per_second": timing["pairs_per_second"]
+            }
+
+            print(f"{size:12s}: {metrics['accuracy']:.4f} accuracy, {metrics['total_pairs']:4d} pairs, {timing['total_time_seconds']:6.1f}s")
+
+    # Save comparison
+    comparison_file = Path(OUTPUT_DIR) / f"iris_benchmark_comparison_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    with open(comparison_file, 'w') as f:
+        json.dump(comparison_data, f, indent=2, default=str)
+
+    print(f"\n📁 Comparison saved to: {comparison_file}")
+
+    return all_results
+
+def optimize_threshold():
+    """Find optimal similarity threshold for iris recognition."""
+
+    print(f"\n🎛️ OPTIMIZING SIMILARITY THRESHOLD")
+    print("=" * 60)
+
+    # Initialize system
+    iris_system = OptimizedIrisRecognition()
+    dataset = LoadIITDDataset()
+
+    # Get sample for threshold optimization
+    optimization_pairs = []
+    import random
+
+    # Sample balanced pairs for optimization
+    genuine_sample = random.sample(dataset.genuine_pairs, min(200, len(dataset.genuine_pairs)))
+    impostor_sample = random.sample(dataset.impostor_pairs, min(200, len(dataset.impostor_pairs)))
+    optimization_pairs = genuine_sample + impostor_sample
+    random.shuffle(optimization_pairs)
+
+    print(f"Testing {len(optimization_pairs)} pairs for threshold optimization...")
+
+    # Extract similarities and labels
+    similarities = []
+    labels = []
+
+    for img1, img2, label in tqdm(optimization_pairs, desc="Extracting similarities"):
+        emb1 = iris_system.get_optimized_embedding(str(img1))
+        emb2 = iris_system.get_optimized_embedding(str(img2))
+
+        if emb1 is not None and emb2 is not None:
+            similarity = iris_system.compute_similarity(emb1, emb2)
+            similarities.append(similarity)
+            labels.append(label)
+
+    similarities = np.array(similarities)
+    labels = np.array(labels)
+
+    # Test different thresholds
+    thresholds = np.linspace(similarities.min(), similarities.max(), 100)
+    best_accuracy = 0
+    best_threshold = SIMILARITY_THRESHOLD
+
+    threshold_results = []
+
+    for threshold in thresholds:
+        predictions = (similarities > threshold).astype(int)
+        accuracy = np.mean(predictions == labels)
+
+        # Calculate other metrics
+        tp = np.sum((predictions == 1) & (labels == 1))
+        tn = np.sum((predictions == 0) & (labels == 0))
+        fp = np.sum((predictions == 1) & (labels == 0))
+        fn = np.sum((predictions == 0) & (labels == 1))
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+        threshold_results.append({
+            "threshold": threshold,
+            "accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1
+        })
+
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_threshold = threshold
+
+    print(f"\n🎯 Threshold Optimization Results:")
+    print(f"   • Best threshold: {best_threshold:.4f}")
+    print(f"   • Best accuracy: {best_accuracy:.4f}")
+    print(f"   • Current threshold: {SIMILARITY_THRESHOLD:.4f}")
+
+    # Save threshold analysis
+    threshold_file = Path(OUTPUT_DIR) / f"iris_threshold_optimization_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    with open(threshold_file, 'w') as f:
+        json.dump({
+            "optimal_threshold": best_threshold,
+            "optimal_accuracy": best_accuracy,
+            "current_threshold": SIMILARITY_THRESHOLD,
+            "all_thresholds": threshold_results,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }, f, indent=2, default=str)
+
+    print(f"\n📁 Threshold analysis saved to: {threshold_file}")
+
+    return best_threshold, threshold_results
+
+
 def main():
     """Main benchmark execution."""
     import argparse
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Optimized Iris Recognition Benchmark")
+    parser.add_argument("benchmark_type", nargs="?", default="medium",
+                       help="Benchmark type: quick, small, medium, large, full_dataset, compare_all, optimize_threshold")
     parser.add_argument("--quick", action="store_true",
                        help="Run quick test with ~2000 pairs (100 genuine, 1900 impostor)")
     parser.add_argument("--max-pairs", type=int, default=None,
                        help="Maximum number of pairs to test (balanced genuine/impostor)")
     args = parser.parse_args()
 
-    logger.info("🔬 Initializing Optimized Iris Recognition Benchmark")
-    
-    if args.quick:
-        logger.info("🚀 Running in QUICK TEST mode")
-    elif args.max_pairs:
-        logger.info(f"📊 Testing with maximum {args.max_pairs:,} pairs")
+    # Create output directory
+    Path(OUTPUT_DIR).mkdir(exist_ok=True)
+
+    benchmark_type = args.benchmark_type
+
+    if benchmark_type == "optimize_threshold":
+        optimize_threshold()
+    elif benchmark_type == "compare_all":
+        compare_benchmark_sizes()
+    elif benchmark_type in ["quick", "small", "medium", "large", "full_dataset"]:
+        logger.info("🔬 Initializing Optimized Iris Recognition Benchmark")
+
+        # Initialize system
+        iris_system = OptimizedIrisRecognition()
+
+        # Initialize benchmark
+        benchmark = IrisRecognitionBenchmark(iris_system)
+
+        # Map benchmark types to parameters
+        if benchmark_type == "quick" or args.quick:
+            logger.info("🚀 Running QUICK TEST mode")
+            results = benchmark.run_benchmark(quick_test=True)
+        elif benchmark_type == "small":
+            logger.info("📊 Running SMALL benchmark (1,000 pairs)")
+            results = benchmark.run_benchmark(max_pairs=1000)
+        elif benchmark_type == "medium":
+            logger.info("📊 Running MEDIUM benchmark (5,000 pairs)")
+            results = benchmark.run_benchmark(max_pairs=args.max_pairs or 5000)
+        elif benchmark_type == "large":
+            logger.info("📊 Running LARGE benchmark (20,000 pairs)")
+            results = benchmark.run_benchmark(max_pairs=args.max_pairs or 20000)
+        elif benchmark_type == "full_dataset":
+            logger.info("📈 Running FULL DATASET benchmark")
+            results = benchmark.run_benchmark(max_pairs=args.max_pairs)
+
+        logger.info("✅ Benchmark completed successfully!")
+        return results
     else:
-        logger.info("📈 Running FULL DATASET benchmark")
-
-    # Initialize system
-    iris_system = OptimizedIrisRecognition()
-    
-    # Initialize benchmark
-    benchmark = IrisRecognitionBenchmark(iris_system)
-    
-    # Run benchmark with appropriate settings
-    results = benchmark.run_benchmark(
-        max_pairs=args.max_pairs,
-        quick_test=args.quick
-    )
-
-    logger.info("✅ Benchmark completed successfully!")
-    
-    return results
+        print(f"Unknown benchmark type: {benchmark_type}")
+        print("Available options: quick, small, medium, large, full_dataset, compare_all, optimize_threshold")
+        print("Use: python benchmark_optimized_iris.py [quick|small|medium|large|full_dataset|compare_all|optimize_threshold]")
+        return None
 
 
 if __name__ == "__main__":

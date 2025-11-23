@@ -6,7 +6,7 @@
 MODEL_NAME="RedHatAI/gemma-3-27b-it-quantized.w4a16"
 HOST="0.0.0.0"
 PORT="8000"
-MAX_MODEL_LEN="2048"
+MAX_MODEL_LEN="32000"
 
 echo "Starting vLLM OpenAI-compatible server..."
 echo "Model: $MODEL_NAME"

@@ -1,0 +1,22 @@
+You are an expert facial identification specialist. Analyze these two face images with extreme precision.
+
+CRITICAL ANALYSIS STEPS:
+1. Compare bone structure (cheekbones, jawline, forehead shape)
+2. Analyze eye geometry (shape, spacing, brow structure)
+3. Compare nose characteristics (shape, width, nostril form)
+4. Examine mouth and lip structure
+5. Assess overall facial proportions and symmetry
+
+IMPORTANT CONSIDERATIONS:
+- Ethnic or regional similarity does NOT mean same person
+- Features must match precisely, not just be similar
+- Pay attention to distinctive differences, even if subtle
+- General resemblance is not sufficient evidence
+
+RESPONSE FORMAT REQUIREMENTS:
+- Answer with exactly "YES" or "NO" only
+- Follow with 1-2 sentences explaining your key evidence
+- Do not include both YES and NO in your response
+- If uncertain, choose based on strongest evidence
+
+Your analysis:

@@ -36,11 +36,11 @@ torch._dynamo.config.disable = True
 MODEL_ID = "google/gemma-3-4b-it"
 
 # Default optimal dimensions (will be loaded from analysis file if available)
-DEFAULT_OPTIMAL_DIMENSIONS = 150  # Expected optimal range for faces
+DEFAULT_OPTIMAL_DIMENSIONS = 1280  # Expected optimal range for faces
 
 # Benchmark parameters
 BATCH_SIZE = 50               # Reduced batch size for face processing
-SIMILARITY_THRESHOLD = 0.85   # Threshold for same/different person (lower than iris)
+SIMILARITY_THRESHOLD = 0.9581480387485388   # Threshold for same/different person (lower than iris)
 MAX_PAIRS_TO_TEST = None      # Set to None for full dataset
 SAVE_DETAILED_RESULTS = True  # Save individual pair results
 OUTPUT_DIR = "face_benchmark_results"
@@ -84,67 +84,114 @@ print(f"✅ Model loaded successfully in {load_time:.2f} seconds!")
 # ===============================================================================
 
 def load_optimal_dimensions():
-    """Load optimal dimensions from analysis file or use defaults."""
+    """Load optimal dimensions and best method from full analysis file."""
     global DEFAULT_OPTIMAL_DIMENSIONS
     
-    optimal_file = "optimal_face_dimensions.json"
-    
-    if Path(optimal_file).exists():
-        try:
-            with open(optimal_file, 'r') as f:
-                data = json.load(f)
-            
-            optimal_count = data.get("optimal_dimension_count", DEFAULT_OPTIMAL_DIMENSIONS)
-            top_indices = data.get("top_dimension_indices", None)
-            
-            logger.info(f"Loaded optimal dimensions from {optimal_file}: {optimal_count} dimensions")
-            return optimal_count, np.array(top_indices) if top_indices else None
-            
-        except Exception as e:
-            logger.warning(f"Failed to load optimal dimensions: {e}")
-    
-    logger.info(f"Using default optimal dimensions: {DEFAULT_OPTIMAL_DIMENSIONS}")
-    return DEFAULT_OPTIMAL_DIMENSIONS, None
+    # Try to load from the most recent full analysis file
+    analysis_files = [
+        "optimal_face_embeddings_20250706_144733.json",
+        "optimal_face_embeddings_20250706_025757.json",
+        "optimal_face_embeddings_20250706_022631.json",
+        "optimal_face_dimensions.json"  # Fallback to simple file
+    ]
 
-def get_optimized_face_embedding(image_path, top_dimensions=None, method="mean_pooling"):
+    for optimal_file in analysis_files:
+        if Path(optimal_file).exists():
+            try:
+                with open(optimal_file, 'r') as f:
+                    data = json.load(f)
+
+                # Check if this is a full analysis file or simple dimensions file
+                if "method_comparison" in data:
+                    # Full analysis file
+                    optimal_count = data["dimension_analysis"]["optimal_dimension_count"]
+                    top_indices = data["dimension_analysis"]["top_dimension_indices"]
+                    best_method = data["method_comparison"]["best_method"]
+
+                    # Parse the best method to extract pooling strategy and similarity metric
+                    if "no_projector" in best_method:
+                        pooling_strategy = "mean_pooling"  # Default when no projector
+                        similarity_metric = best_method.split("_")[-1]  # Get the last part (cosine, euclidean, etc.)
+                    else:
+                        parts = best_method.split("_")
+                        pooling_strategy = "_".join(parts[:-1])  # Everything except the last part
+                        similarity_metric = parts[-1]  # The last part
+
+                    logger.info(f"Loaded optimal configuration from {optimal_file}:")
+                    logger.info(f"  Dimensions: {optimal_count}")
+                    logger.info(f"  Best method: {best_method}")
+                    logger.info(f"  Pooling strategy: {pooling_strategy}")
+                    logger.info(f"  Similarity metric: {similarity_metric}")
+                    logger.info(f"  Analysis timestamp: {data.get('analysis_info', {}).get('timestamp', 'Unknown')}")
+
+                    return optimal_count, np.array(top_indices), pooling_strategy, similarity_metric
+
+                else:
+                    # Simple dimensions file (fallback)
+                    optimal_count = data.get("optimal_dimension_count", DEFAULT_OPTIMAL_DIMENSIONS)
+                    top_indices = data.get("top_dimension_indices", None)
+
+                    logger.info(f"Loaded simple dimensions from {optimal_file}: {optimal_count} dimensions")
+                    logger.warning("Using default methods (mean_pooling, cosine) - consider running full analysis")
+
+                    return optimal_count, np.array(top_indices) if top_indices else None, "mean_pooling", "cosine"
+
+            except Exception as e:
+                logger.warning(f"Failed to load from {optimal_file}: {e}")
+                continue
+
+    logger.warning("No analysis files found, using defaults")
+    return DEFAULT_OPTIMAL_DIMENSIONS, None, "mean_pooling", "cosine"
+
+def get_optimized_face_embedding(image_path, top_dimensions=None, pooling_method="mean_pooling"):
     """Extract optimized face embedding using only most discriminative dimensions."""
     try:
         # Load and preprocess the image
         image = Image.open(image_path).convert('RGB')
         inputs = processor2(images=image, return_tensors="pt")
         
-        # Move inputs to device and ensure consistent data types
-        inputs = {k: v.to(model.device) for k, v in inputs.items()}
+        # Move inputs to device and convert to model's native dtype (BFloat16)
+        inputs = {k: v.to(model.device).to(model.dtype) for k, v in inputs.items()}
 
         with torch.no_grad():
             # Use the same pipeline as the analysis phase to ensure dimension consistency
             image_outputs = model.vision_tower(inputs['pixel_values'])
             selected_image_feature = image_outputs.last_hidden_state
 
-            # Convert to float32 if needed to avoid BFloat16 issues
-            if selected_image_feature.dtype == torch.bfloat16:
-                selected_image_feature = selected_image_feature.float()
+            # Ensure BFloat16 consistency
+            if selected_image_feature.dtype != model.dtype:
+                selected_image_feature = selected_image_feature.to(model.dtype)
 
-            # Apply multi-modal projector to match analysis phase (2560 dimensions)
-            image_embeddings = model.multi_modal_projector(selected_image_feature)
-
-            # Convert to float32 if needed
-            if image_embeddings.dtype == torch.bfloat16:
-                image_embeddings = image_embeddings.float()
-
-            # Apply pooling strategy (mean_pooling was used in analysis)
-            if method == "mean_pooling":
-                embedding = image_embeddings.mean(dim=1).squeeze(0)
-            elif method == "max_pooling":
-                embedding = image_embeddings.max(dim=1).values.squeeze(0)
-            elif method == "cls_token":
-                embedding = image_embeddings[:, 0, :].squeeze(0)
+            # For face analysis, check if we should use projector or not
+            if pooling_method == "no_projector":
+                # Use features directly without projector (based on analysis results)
+                image_embeddings = selected_image_feature
             else:
+                # Apply multi-modal projector to match analysis phase (2560 dimensions)
+                image_embeddings = model.multi_modal_projector(selected_image_feature)
+
+                # Ensure BFloat16 consistency
+                if image_embeddings.dtype != model.dtype:
+                    image_embeddings = image_embeddings.to(model.dtype)
+
+            # Apply pooling strategy based on analysis results
+            if pooling_method == "mean_pooling" or pooling_method == "no_projector":
+                embedding = image_embeddings.mean(dim=1).squeeze(0)
+            elif pooling_method == "max_pooling":
+                embedding = image_embeddings.max(dim=1).values.squeeze(0)
+            elif pooling_method == "std_pooling":
+                embedding = image_embeddings.std(dim=1).squeeze(0)
+            elif pooling_method == "attention_pooling":
+                # Simple attention pooling
+                attention_weights = torch.softmax(image_embeddings.mean(dim=-1), dim=-1)
+                embedding = torch.sum(image_embeddings * attention_weights.unsqueeze(-1), dim=1).squeeze(0)
+            else:
+                # Default to mean pooling
                 embedding = image_embeddings.mean(dim=1).squeeze(0)
 
-            # Convert to numpy
-            full_embedding = embedding.cpu().numpy()
-            
+            # Convert to float32 only for numpy conversion (numpy doesn't support BFloat16)
+            full_embedding = embedding.float().cpu().numpy()
+
             # Extract optimal dimensions if specified
             if top_dimensions is not None:
                 optimized_embedding = full_embedding[top_dimensions]
@@ -162,16 +209,33 @@ def get_optimized_face_embedding(image_path, top_dimensions=None, method="mean_p
         logger.error(f"Error extracting embedding from {image_path}: {e}")
         return None
 
-def calculate_similarity(embedding1, embedding2):
-    """Calculate cosine similarity between two face embeddings."""
+def calculate_similarity(embedding1, embedding2, similarity_metric="cosine"):
+    """Calculate similarity between two face embeddings using the specified metric."""
     if embedding1 is None or embedding2 is None:
         return 0.0
     
-    # Cosine similarity (embeddings are already normalized)
-    similarity = np.dot(embedding1, embedding2)
+    if similarity_metric == "cosine":
+        # Cosine similarity (embeddings are already normalized)
+        similarity = np.dot(embedding1, embedding2)
+    elif similarity_metric == "euclidean":
+        # Euclidean distance (converted to similarity)
+        distance = np.linalg.norm(embedding1 - embedding2)
+        similarity = 1.0 / (1.0 + distance)  # Convert distance to similarity
+    elif similarity_metric == "manhattan":
+        # Manhattan distance (converted to similarity)
+        distance = np.sum(np.abs(embedding1 - embedding2))
+        similarity = 1.0 / (1.0 + distance)  # Convert distance to similarity
+    elif similarity_metric == "correlation":
+        # Pearson correlation coefficient
+        correlation = np.corrcoef(embedding1, embedding2)[0, 1]
+        similarity = correlation if not np.isnan(correlation) else 0.0
+    else:
+        # Default to cosine similarity
+        similarity = np.dot(embedding1, embedding2)
+
     return float(similarity)
 
-def process_face_pairs_batch(pairs_batch, top_dimensions=None):
+def process_face_pairs_batch(pairs_batch, top_dimensions=None, pooling_method="mean_pooling", similarity_metric="cosine"):
     """Process a batch of face pairs and return results."""
     batch_results = []
     batch_start_time = time.time()
@@ -179,16 +243,16 @@ def process_face_pairs_batch(pairs_batch, top_dimensions=None):
     for i, (img1_path, img2_path, true_label) in enumerate(pairs_batch):
         try:
             # Extract embeddings
-            emb1 = get_optimized_face_embedding(str(img1_path), top_dimensions)
-            emb2 = get_optimized_face_embedding(str(img2_path), top_dimensions)
-            
+            emb1 = get_optimized_face_embedding(str(img1_path), top_dimensions, pooling_method)
+            emb2 = get_optimized_face_embedding(str(img2_path), top_dimensions, pooling_method)
+
             if emb1 is None or emb2 is None:
                 logger.warning(f"Failed to extract embeddings for pair {i}")
                 continue
             
-            # Calculate similarity
-            similarity = calculate_similarity(emb1, emb2)
-            
+            # Calculate similarity using the optimal method
+            similarity = calculate_similarity(emb1, emb2, similarity_metric)
+
             # Make prediction
             predicted_label = 1 if similarity > SIMILARITY_THRESHOLD else 0
             is_correct = predicted_label == true_label
@@ -201,7 +265,9 @@ def process_face_pairs_batch(pairs_batch, top_dimensions=None):
                 "predicted_label": predicted_label,
                 "similarity": similarity,
                 "is_correct": is_correct,
-                "embedding_dim": len(emb1)
+                "embedding_dim": len(emb1),
+                "pooling_method": pooling_method,
+                "similarity_metric": similarity_metric
             }
             
             batch_results.append(result)
@@ -283,8 +349,8 @@ def run_face_recognition_benchmark(benchmark_size="medium"):
     print("=" * 60)
     
     # Load optimal dimensions
-    optimal_dim_count, top_dimensions = load_optimal_dimensions()
-    
+    optimal_dim_count, top_dimensions, pooling_method, similarity_metric = load_optimal_dimensions()
+
     print(f"📊 Benchmark Configuration:")
     print(f"   • Model: {MODEL_ID}")
     print(f"   • Embedding dimensions: {optimal_dim_count}")
@@ -332,7 +398,7 @@ def run_face_recognition_benchmark(benchmark_size="medium"):
     # Process in batches
     for i in tqdm(range(0, len(test_pairs), BATCH_SIZE), desc="Processing batches"):
         batch = test_pairs[i:i + BATCH_SIZE]
-        batch_results = process_face_pairs_batch(batch, top_dimensions)
+        batch_results = process_face_pairs_batch(batch, top_dimensions, pooling_method, similarity_metric)
         all_results.extend(batch_results)
         
         # Print progress every 5 batches
@@ -371,7 +437,7 @@ def run_face_recognition_benchmark(benchmark_size="medium"):
         "configuration": {
             "optimal_dimensions_file": "optimal_face_dimensions.json" if top_dimensions is not None else "default",
             "using_optimized_dimensions": top_dimensions is not None,
-            "embedding_method": "mean_pooling"
+            "embedding_method": pooling_method
         }
     }
     

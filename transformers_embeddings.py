@@ -76,23 +76,23 @@ class MultiModalEmbeddingAnalyzer:
             image = Image.open(image_path).convert('RGB')
             inputs = self.processor2(images=image, return_tensors="pt")
 
-            # Move inputs to device (let model handle dtype automatically)
-            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+            # Move inputs to device and convert to model's native dtype
+            inputs = {k: v.to(self.model.device).to(self.model.dtype) for k, v in inputs.items()}
 
             with torch.no_grad():
                 # Use the complete pipeline
                 image_outputs = self.model.vision_tower(inputs['pixel_values'])
                 selected_image_feature = image_outputs.last_hidden_state
 
-                # Convert to float32 if needed to avoid BFloat16 issues
-                if selected_image_feature.dtype == torch.bfloat16:
-                    selected_image_feature = selected_image_feature.float()
+                # Ensure dtype consistency with model
+                if selected_image_feature.dtype != self.model.dtype:
+                    selected_image_feature = selected_image_feature.to(self.model.dtype)
 
                 image_embeddings = self.model.multi_modal_projector(selected_image_feature)
 
-                # Convert to float32 if needed
-                if image_embeddings.dtype == torch.bfloat16:
-                    image_embeddings = image_embeddings.float()
+                # Ensure dtype consistency with model
+                if image_embeddings.dtype != self.model.dtype:
+                    image_embeddings = image_embeddings.to(self.model.dtype)
 
                 if method == "mean_pooling":
                     # Original method - mean across spatial dimensions
@@ -119,8 +119,8 @@ class MultiModalEmbeddingAnalyzer:
                     # Default to mean pooling
                     image_embedding_vector = image_embeddings.mean(dim=1)
 
-            # Convert to numpy and normalize
-            embedding_np = image_embedding_vector.cpu().numpy().flatten()
+            # Convert to float32 only for numpy conversion (numpy doesn't support BFloat16)
+            embedding_np = image_embedding_vector.float().cpu().numpy().flatten()
 
             # Normalize to unit vector
             norm = np.linalg.norm(embedding_np)
